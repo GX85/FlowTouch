@@ -1,5 +1,8 @@
 """FlowTouch Windows companion. Python stdlib only; no shell command execution."""
 import argparse
+from urllib.parse import urlparse
+from ctypes import wintypes
+from agent import MovementAgent
 import ctypes
 import hmac
 import json
@@ -27,7 +30,20 @@ KEYS = {'media': [0xB3], 'stopmedia': [0xB2], 'next': [0xB0], 'previous': [0xB1]
         'newtab': [0x11, 0x54], 'fullscreen': [0x7A], 'desktop': [0x5B, 0x44]}
 WINDOWS_ROOT = Path(os.environ.get('SystemRoot', 'C:/Windows'))
 APPS = {'calculator': WINDOWS_ROOT / 'System32' / 'calc.exe', 'notepad': WINDOWS_ROOT / 'System32' / 'notepad.exe', 'explorer': WINDOWS_ROOT / 'explorer.exe'}
-ACTIONS = set(URLS) | set(KEYS) | set(APPS) | {'pointer', 'click', 'scrollup', 'scrolldown', 'arm', 'disarm', 'heartbeat'}
+ACTIONS = set(URLS) | set(KEYS) | set(APPS) | {'pointer', 'click', 'scrollup', 'scrolldown', 'arm', 'disarm', 'heartbeat', 'shortcut', 'keydown', 'keyup', 'url', 'app', 'rightclick', 'doubleclick'}
+
+KEY_CODES={'Space':0x20,'Enter':0x0D,'Tab':0x09,'Escape':0x1B,'Backspace':0x08,'Delete':0x2E,'ArrowUp':0x26,'ArrowDown':0x28,'ArrowLeft':0x25,'ArrowRight':0x27,'Shift':0x10,'Control':0x11,'Alt':0x12}
+KEY_CODES.update({chr(i):i for i in range(65,91)})
+KEY_CODES.update({str(i):0x30+i for i in range(10)})
+KEY_CODES.update({'F'+str(i):0x6F+i for i in range(1,13)})
+class KeyboardInput(ctypes.Structure):
+    _fields_=[('vk',wintypes.WORD),('scan',wintypes.WORD),('flags',wintypes.DWORD),('time',wintypes.DWORD),('extra',ctypes.c_size_t)]
+class MouseInput(ctypes.Structure):
+    _fields_=[('dx',wintypes.LONG),('dy',wintypes.LONG),('data',wintypes.DWORD),('flags',wintypes.DWORD),('time',wintypes.DWORD),('extra',ctypes.c_size_t)]
+class InputUnion(ctypes.Union):
+    _fields_=[('keyboard',KeyboardInput),('mouse',MouseInput)]
+class Input(ctypes.Structure):
+    _fields_=[('kind',wintypes.DWORD),('value',InputUnion)]
 
 class Controller:
     def __init__(self, dry_run=False):
@@ -36,10 +52,34 @@ class Controller:
         self.armed = False
         self.deadline = 0
         self.last = {}
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+        self.held_keys=set()
+        self.key_deadline=0
+        self.agent=MovementAgent()
         self.user32 = ctypes.windll.user32 if os.name == 'nt' and not dry_run else None
         if self.user32:
             self.user32.SetProcessDPIAware()
+
+    def key_event(self,code,up=False):
+        if not self.user32:return
+        scan=self.user32.MapVirtualKeyW(code,0)
+        flags=(8 if scan else 0)|(2 if up else 0)|(1 if code in (0x25,0x26,0x27,0x28,0x2E) else 0)
+        item=Input(kind=1,value=InputUnion(keyboard=KeyboardInput(0 if scan else code,scan,flags,0,0)))
+        if self.user32.SendInput(1,ctypes.byref(item),ctypes.sizeof(Input))!=1:raise OSError('Windows rejected input. Check the target window permissions.')
+
+    def release_keys(self):
+        for key in list(self.held_keys):
+            try:self.key_event(KEY_CODES[key],True)
+            except OSError:pass
+        self.held_keys.clear()
+
+    def pause(self):
+        with self.lock:self.armed=False;self.release_keys()
+
+    def watchdog(self):
+        with self.lock:
+            if self.armed and time.monotonic()>self.deadline:self.pause()
+            elif self.held_keys and time.monotonic()>self.key_deadline:self.release_keys()
 
     def execute(self, data):
         action = data.get('action')
@@ -52,44 +92,71 @@ class Controller:
                 self.deadline = now + 3
                 return
             if action == 'disarm':
-                self.armed = False
+                self.pause()
                 return
             if not self.armed or now > self.deadline:
-                self.armed = False
+                self.pause()
                 raise PermissionError('Paused. Enable commands in local studio.')
             if action == 'heartbeat':
                 self.deadline = now + 3
                 return
             if self.user32 and self.user32.GetAsyncKeyState(0x1B) & 0x8000:
-                self.armed = False
+                self.pause()
                 raise PermissionError('Emergency pause')
-            minimum = .06 if action == 'pointer' else .6
+            minimum = 0 if action in ('keydown','keyup') else .04 if action in ('pointer','shortcut','click') else .6
             if now - self.last.get(action, -math.inf) < minimum:
                 return
             self.last[action] = now
+            if action in ('shortcut','keydown','keyup'):
+                keys=data.get('keys')
+                if not isinstance(keys,list) or not 1<=len(keys)<=4 or any(not isinstance(k,str) or k not in KEY_CODES for k in keys) or len(set(keys))!=len(keys):raise ValueError('Invalid keys')
+                if action=='keydown':self.key_deadline=now+.85
+                if action=='keyup':
+                    for key in reversed(keys):
+                        if key in self.held_keys:self.key_event(KEY_CODES[key],True);self.held_keys.discard(key)
+                else:
+                    for key in keys:
+                        if key not in self.held_keys:self.key_event(KEY_CODES[key]);self.held_keys.add(key)
+                    if action=='shortcut':
+                        for key in reversed(keys):self.key_event(KEY_CODES[key],True);self.held_keys.discard(key)
+                return
+            if action=='url':
+                url=data.get('url','')
+                if not isinstance(url,str) or len(url)>2048:raise ValueError('Invalid URL')
+                parsed=urlparse(url)
+                if parsed.scheme not in ('http','https') or not parsed.netloc or parsed.username or parsed.password:raise ValueError('Invalid URL')
+                if not self.dry_run:webbrowser.open_new_tab(url)
+                return
+            if action=='app':
+                path=data.get('path','')
+                if not isinstance(path,str) or not Path(path).is_absolute() or Path(path).suffix.lower()!='.exe' or not Path(path).is_file():raise ValueError('Choose an existing absolute .exe path')
+                if not self.dry_run:subprocess.Popen([path],shell=False)
+                return
             if action == 'pointer':
                 x, y = data.get('x'), data.get('y')
                 if not all(type(n) in (float, int) and math.isfinite(n) and 0 <= n <= 1 for n in [x, y]):
                     raise ValueError('Coordinates must be normalized numbers')
                 if x < .025 and y < .025:
-                    self.armed = False
+                    self.pause()
                     raise PermissionError('Top-left corner emergency pause')
                 if self.user32:
                     w, h = self.user32.GetSystemMetrics(0), self.user32.GetSystemMetrics(1)
                     self.user32.SetCursorPos(round(x * (w-1)), round(y * (h-1)))
             elif not self.dry_run:
                 if action in URLS:
-                    webbrowser.open_new_tab(URLS[action])
+                    if not webbrowser.open_new_tab(URLS[action]):
+                        raise OSError('Windows could not open the default browser')
                 elif action in APPS:
                     subprocess.Popen([str(APPS[action])])
                 elif action in KEYS:
                     for key in KEYS[action]:
-                        self.user32.keybd_event(key, 0, 0, 0)
+                        self.key_event(key)
                     for key in reversed(KEYS[action]):
-                        self.user32.keybd_event(key, 0, 2, 0)
-                elif action == 'click':
-                    self.user32.mouse_event(0x0002, 0, 0, 0, 0)
-                    self.user32.mouse_event(0x0004, 0, 0, 0, 0)
+                        self.key_event(key,True)
+                elif action in ('click','rightclick','doubleclick'):
+                    for _ in range(2 if action=='doubleclick' else 1):
+                        self.user32.mouse_event(0x0008 if action=='rightclick' else 0x0002,0,0,0,0)
+                        self.user32.mouse_event(0x0010 if action=='rightclick' else 0x0004,0,0,0,0)
                 elif action in ('scrollup', 'scrolldown'):
                     delta = 360 if action == 'scrollup' else -360
                     self.user32.mouse_event(0x0800, 0, 0, ctypes.c_uint32(delta).value, 0)
@@ -119,35 +186,47 @@ def make_handler(root, controller):
             self.wfile.write(body)
 
         def do_GET(self):
-            if not self.allowed():
+            # Cross-site top-level navigation may open the public UI, never the session API.
+            ui_navigation = (not self.path.startswith('/api/') and self.headers.get('Host') in HOSTS
+                             and self.headers.get('Sec-Fetch-Mode') == 'navigate'
+                             and self.headers.get('Sec-Fetch-Dest') == 'document')
+            if not self.allowed() and not ui_navigation:
                 return self.reply(403, {'error': 'Local origin required'})
             if self.path == '/api/session':
-                return self.reply(200, {'token': controller.token, 'platform': 'windows', 'app': 'FlowTouch', 'version':'1.1.0', 'dryRun': controller.dry_run})
+                return self.reply(200, {'token': controller.token, 'platform': 'windows', 'app': 'FlowTouch', 'version':'2.0.0', 'dryRun': controller.dry_run})
+            if self.path=='/api/agent/settings':
+                if not hmac.compare_digest(self.headers.get('X-FlowTouch-Token',''),controller.token):return self.reply(403,{'error':'Session token required'})
+                return self.reply(200,controller.agent.public())
             if self.path.startswith('/api/'):
                 return self.reply(404, {'error': 'Not found'})
             super().do_GET()
 
         def do_POST(self):
-            if self.path != '/api/action':
+            if self.path not in ('/api/action','/api/agent/settings','/api/agent/analyze'):
                 return self.reply(404, {'error': 'Not found'})
             token = self.headers.get('X-FlowTouch-Token', '')
             if not self.allowed(write=True) or not hmac.compare_digest(token, controller.token):
                 return self.reply(403, {'error': 'Local origin and session token required'})
             try:
                 length = int(self.headers.get('Content-Length', 0))
-                if not 0 < length <= 2048:
+                if not 0 < length <= 8192:
                     raise ValueError('Invalid body length')
                 data = json.loads(self.rfile.read(length))
                 if not isinstance(data, dict):
                     raise ValueError('Object required')
+                if self.path=='/api/agent/settings':return self.reply(200,controller.agent.configure(data))
+                if self.path=='/api/agent/analyze':return self.reply(200,controller.agent.analyze(data))
                 controller.execute(data)
                 self.reply(200, {'ok': True})
             except PermissionError as error:
                 self.reply(409, {'error': str(error)})
-            except (ValueError, TypeError):
-                self.reply(400, {'error': 'Invalid command'})
+            except OSError as error:
+                self.reply(500, {'error': str(error)})
+            except (ValueError, TypeError) as error:
+                self.reply(400, {'error': str(error) if self.path.startswith('/api/agent/') else 'Invalid command'})
 
         def end_headers(self):
+            self.send_header('Cache-Control', 'no-store')
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('Cross-Origin-Resource-Policy', 'same-origin')
             self.send_header('Permissions-Policy', 'camera=(self), microphone=()')
@@ -177,7 +256,7 @@ def main():
         controller.execute({'action':'arm'})
         controller.execute({'action':'calculator'})
         controller.execute({'action':'youtube'})
-        report = {'ok':True,'studio':(root/'studio'/'index.html').is_file(),'model':(root/'models'/'gesture_recognizer.task').is_file(),'worker':(root/'vision-worker.bundle.js').is_file(),'native_commands':'dry-run passed'}
+        report = {'ok':True,'studio':(root/'studio'/'index.html').is_file(),'model':(root/'models'/'gesture_recognizer.task').is_file(),'worker':(root/'vision-worker.bundle.js').is_file(),'native_commands':'dry-run passed','version':'2.0.0','agent':True}
         Path(args.self_test).write_text(json.dumps(report),encoding='utf-8')
         return
     controller = Controller(args.dry_run)
@@ -187,20 +266,21 @@ def main():
         while True:
             if controller.user32 and controller.user32.GetAsyncKeyState(0x1B) & 0x8000:
                 with controller.lock:
-                    controller.armed = False
+                    controller.pause()
+            controller.watchdog()
             time.sleep(.025)
     threading.Thread(target=emergency_monitor, daemon=True).start()
     print('FlowTouch is running at http://127.0.0.1:8765')
     print('Enable commands in the local studio. Escape pauses OS control globally.')
     print('Close this window or press Ctrl+C to stop the companion.')
     if not args.no_browser:
-        webbrowser.open('http://127.0.0.1:8765/studio/')
+        webbrowser.open('http://127.0.0.1:8765/studio/?desktop=1&v=2.0.0')
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        controller.armed = False
+        controller.pause()
         server.server_close()
 
 if __name__ == '__main__':

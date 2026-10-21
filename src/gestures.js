@@ -21,6 +21,19 @@ export const GESTURES = [
  ['Call','Victory','Новая вкладка','newtab'],['ILoveYou','Victory','Полный экран','fullscreen'],['ILoveYou','Closed_Fist','Показать рабочий стол','desktop']
  ].map(([a,b,action,mode])=>({id:a+'>'+b,name:'Связка',action,emoji:'↳',mode,sequence:[a,b],desc:'Режим «Связки»: удержи первый жест, затем второй в течение 2,2 секунды.'}))
 ];
+// Every ordered pair of distinct non-pause poses is recognizable in sequence mode.
+const poses=GESTURES.filter(g=>!g.sequence&&!g.id.startsWith('Swipe')&&g.id!=='Open_Palm');
+const shortcuts=[
+ ['Control','S'],['Control','Z'],['Control','Y'],['Control','A'],['Control','F'],['Control','N'],['Control','O'],['Control','P'],['Control','X'],['Control','C'],['Control','V'],['Control','Shift','S'],
+ ['Space'],['Enter'],['Tab'],['Shift','Tab'],['ArrowUp'],['ArrowDown'],['ArrowLeft'],['ArrowRight'],['Backspace'],['Delete'],['F2'],['F5'],['F11'],['Control','W'],['Control','Shift','T'],['Alt','ArrowLeft'],['Alt','ArrowRight'],['Control','L']
+];
+for(const first of poses)for(const second of poses){
+ const id=first.id+'>'+second.id;
+ if(first.id===second.id||GESTURES.some(g=>g.id===id))continue;
+ const keys=shortcuts[(GESTURES.length-32)%shortcuts.length];
+ GESTURES.push({id,name:first.name+' → '+second.name,action:keys.join(' + '),en:keys.join(' + '),emoji:'↳',mode:'shortcut',keys,sequence:[first.id,second.id],desc:'Удержи '+first.name.toLowerCase()+', затем '+second.name.toLowerCase()+'. Действие можно изменить в профиле.'});
+}
+export const COUNTS={pose:12,swipe:4,combo:GESTURES.filter(g=>g.sequence).length,total:GESTURES.length};
 export const byId=id=>GESTURES.find(g=>g.id===id);
 export function classify(result, threshold=.6) {
  const hand=result.landmarks?.[0];

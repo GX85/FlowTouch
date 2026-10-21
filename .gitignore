@@ -6,3 +6,11 @@ __pycache__/
 .openai/
 .sites-runtime/
 *.log
+
+.env
+.env.*
+!.env.example
+work-*.py
+.tripo/
+
+work-*.js

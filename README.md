@@ -1,29 +1,39 @@
-# FlowTouch
+# FlowTouch 2.0
 
-Управление компьютером жестами. Отдельные страницы: лендинг `/`, студия `/studio/`.
+Gesture control for Windows. A simple white landing page, an independent `/studio/` workspace, a skinned 3D hand, and a Windows companion for system input.
 
-## Запустить программу Windows
+## Run on Windows
 
-1. Скачайте [FlowTouch.exe](https://github.com/ItsTeamSwift/FlowTouch/raw/refs/heads/main/public/downloads/FlowTouch.exe).
-2. Запустите файл — откроется локальная студия. Python не нужен.
-3. Подключите камеру и нажмите **Начать управление Windows**.
-4. Удерживайте жест до **100% прогресса**. Уверенность модели показана отдельно и не обязана быть 100%.
+Download `public/downloads/FlowTouch.exe`, close the previous version, and run it. It opens `http://127.0.0.1:8765/studio/`. Connect the camera and explicitly enable commands. Escape pauses input and releases held keys globally.
 
-Кулак по умолчанию открывает YouTube. Можно выбрать Калькулятор, Блокнот или Проводник. Escape останавливает команды. Закрытие окна программы завершает работу.
+The browser site supports camera recognition and training. The Windows companion sends mouse and keyboard input to the active application and launches configured `.exe` files without a shell. Some protected or elevated windows and games can restrict injected input.
 
-В браузерной версии доступны распознавание и тренировка; запуск программ требует локальной версии. Видео обрабатывается локально. Звук выключен по умолчанию.
+## Gesture library
 
-## Разработка
+126 recognizable patterns: **12 poses, 4 swipes, 110 ordered two-pose sequences**. These are not 126 distinct finger positions. Pick the corresponding recognition mode. Sequences consist of two held poses within 2.2 seconds. Open palm is always the pause gesture.
+
+Choose an application profile, click any pattern, and assign a key/chord, mouse action, website or local executable. Profiles are stored on the device and support JSON import/export. Built-in profiles: Everyday, Creative, Geometry Dash. Add profiles for other applications.
+
+Game mode uses pose transitions instead of the standard 800 ms hold. A pinch maps to Space hold in Geometry Dash; a fist taps Space. Keep Studio's camera running while the target application is active. Minimized or background browsers may throttle capture. Key release is enforced on lost tracking, pause, camera stop and the companion's input watchdog. Camera and hardware determine latency; this is not a guarantee of competitive game performance.
+
+## Movement agent
+
+OpenRouter, Ollama Cloud and local Ollama are supported in the desktop app's agent settings. Enter the provider, model and API key locally. Keys are encrypted with Windows DPAPI in `%LOCALAPPDATA%/FlowTouch/agent-settings.json`, outside the repository and website. No credentials are shipped in the executable. Other installations require their own key.
+
+The optional agent receives **gesture IDs and confidence summaries**, never video or camera frames, at most once every 8 seconds. It describes movements and tracking quality. Deterministic local mappings perform OS input without waiting for the LLM; model text cannot run commands. The default OpenRouter model is `openrouter/free`; provider quotas and availability still apply. Local Ollama needs no key.
+
+## Development and release
 
 ```sh
 npm ci
 npm run dev
 npm test
+python -m unittest discover -s tests -p "test_*.py"
+npm run build
+python scripts/build_desktop.py
 npm run build
 ```
 
-Для сборки EXE на Windows: `python -m pip install pyinstaller==6.16.0`, затем `python scripts/build_desktop.py`. Backend: `companion/flowtouch.py`.
+The final web rebuild includes the new executable download. Vercel uses `vercel.json`; GitHub Pages uses `.github/workflows/deploy.yml` with `/FlowTouch/` as its base. Select GitHub Actions in repository Pages settings. Production source destination: `GX85/FlowTouch`.
 
-32 команды: 12 поз, 4 свайпа, 16 связок. Краткая потеря распознавания до 220 мс не сбрасывает удержание. Связки выполняются отдельным режимом. Распознавание экспериментальное, качество зависит от света и положения кисти.
-
-Vite, Tailwind, Motion, Three.js, MediaPipe. Модель руки: WebXR Input Profiles, MIT (public/models/HAND-LICENSE.md). Inter Tight: SIL OFL (public/fonts/OFL.txt). MediaPipe: Apache-2.0.
+Vite / Tailwind CSS / Motion / Three.js / MediaPipe / React / Remotion Player. Hand mesh: WebXR Input Profiles, MIT (`public/models/HAND-LICENSE.md`), restored from the original prototype. Fonts: SIL OFL. MediaPipe: Apache 2.0. Robot visuals were implemented locally; no Tripo or Higgsfield generation was billed.

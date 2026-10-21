@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GESTURES, GestureGate, SequenceGate, SwipeDetector, classify } from '../src/gestures.js';
-test('32 unique commands with resolvable two-step sequences',()=>{
- assert.equal(GESTURES.length,32);assert.equal(new Set(GESTURES.map(g=>g.id)).size,32);
+test('126 unique patterns with resolvable two-step sequences',()=>{
+ assert.equal(GESTURES.length,126);assert.equal(new Set(GESTURES.map(g=>g.id)).size,126);
  for(const g of GESTURES.filter(g=>g.sequence))for(const id of g.sequence)assert.ok(GESTURES.some(p=>p.id===id&&!p.sequence));
- assert.equal(GESTURES.filter(g=>g.sequence).length,16);
+ assert.equal(GESTURES.filter(g=>g.sequence).length,110);
 });
 test('hold, latch and sustained release prevent accidental repeats',()=>{
  const g=new GestureGate();assert.equal(g.update('Victory',0,true).fire,false);
@@ -22,7 +22,7 @@ test('disarmed and interrupted holds cannot fire',()=>{
 test('sequences require valid second pose within the time window',()=>{
  const s=new SequenceGate();assert.equal(s.update('Closed_Fist',0).waiting,true);
  assert.equal(s.update('Victory',1800).command,'Closed_Fist>Victory');
- s.update('Closed_Fist',3000);assert.equal(s.update('Four',4000).invalid,true);
+ s.update('Closed_Fist',3000);assert.equal(s.update('Closed_Fist',4000).invalid,true);
  s.update('Closed_Fist',5000);assert.equal(s.update('Victory',7300).waiting,true);
 });
 test('swipe direction follows mirrored screen coordinates and requires travel',()=>{

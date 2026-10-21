@@ -1,3 +1,4 @@
+import { appUrl } from './paths.js';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -8,13 +9,13 @@ export async function mountHandScene(container, section) {
  try{renderer=new THREE.WebGLRenderer({alpha:true,antialias:true,powerPreference:'low-power'});}catch{return;}
  renderer.setPixelRatio(Math.min(devicePixelRatio,1.75));renderer.setClearColor(0x000000,0);
  renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.08;
- renderer.domElement.setAttribute('aria-label','Анатомическая 3D-модель кисти с анимацией суставов');
+ renderer.domElement.setAttribute('aria-label','РђРЅР°С‚РѕРјРёС‡РµСЃРєР°СЏ 3D-РјРѕРґРµР»СЊ РєРёСЃС‚Рё СЃ Р°РЅРёРјР°С†РёРµР№ СЃСѓСЃС‚Р°РІРѕРІ');
  const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(32,1,.1,70);camera.position.set(0,.25,11);
  const pmrem=new THREE.PMREMGenerator(renderer);const room=new RoomEnvironment();const environment=pmrem.fromScene(room,.04);scene.environment=environment.texture;room.dispose();pmrem.dispose();
  scene.add(new THREE.AmbientLight(0xffffff,.7));const light=new THREE.DirectionalLight(0xffffff,2.7);light.position.set(-3,6,6);scene.add(light);
  const edge=new THREE.DirectionalLight(0xb8c9ff,2);edge.position.set(4,2,-4);scene.add(edge);
  const group=new THREE.Group();scene.add(group);
- const gltf=await new GLTFLoader().loadAsync('/models/hand-right.glb');
+ const gltf=await new GLTFLoader().loadAsync(appUrl('models/hand-right.glb'));
  const model=gltf.scene;const mesh=model.getObjectByProperty('type','SkinnedMesh');
  if(!mesh){renderer.dispose();return;}
  mesh.frustumCulled=false;
@@ -43,7 +44,7 @@ export async function mountHandScene(container, section) {
  const pointer={x:0,y:0},smooth={x:0,y:0};let progress=0,selected=-1,selectedAt=0,visible=true,raf=0,last=0,lastPose=-1;
  const buttons=[...document.querySelectorAll('[data-hand-pose]')];
  const label=document.querySelector('#hand-pose-label'),number=document.querySelector('#hand-pose-number'),action=document.querySelector('#hand-action-label'),line=document.querySelector('#hero-scroll-progress');
- const poseNames=['ЛАДОНЬ','КУЛАК','ДВА ПАЛЬЦА'],actions=['Пауза управления','Открыть YouTube','Пауза / воспроизведение'];
+ const poseNames=['Р›РђР”РћРќР¬','РљРЈР›РђРљ','Р”Р’Рђ РџРђР›Р¬Р¦Рђ'],actions=['РџР°СѓР·Р° СѓРїСЂР°РІР»РµРЅРёСЏ','РћС‚РєСЂС‹С‚СЊ YouTube','РџР°СѓР·Р° / РІРѕСЃРїСЂРѕРёР·РІРµРґРµРЅРёРµ'];
  buttons.forEach((b,i)=>b.addEventListener('click',()=>{selected=i;selectedAt=performance.now();window.dispatchEvent(new CustomEvent('flowtouch:pose',{detail:i}));if(reduce){poses[i].forEach((v,k)=>curls[k]=v);last=0;raf=requestAnimationFrame(tick);}}));
  function move(e){const r=container.getBoundingClientRect();pointer.x=Math.max(-1,Math.min(1,(e.clientX-r.left)/r.width*2-1));pointer.y=Math.max(-1,Math.min(1,(e.clientY-r.top)/r.height*2-1));}
  function readScroll(){const r=section.getBoundingClientRect();progress=Math.max(0,Math.min(1,-r.top/Math.max(1,r.height-innerHeight)));}
