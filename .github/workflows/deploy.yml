@@ -24,6 +24,7 @@ jobs:
       - run: npm run build
         env:
           FLOWTOUCH_BASE_PATH: ${{ steps.pages.outputs.base_path }}/
+      - run: node scripts/public-studio.mjs
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
