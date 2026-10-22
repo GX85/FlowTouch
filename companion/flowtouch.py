@@ -15,9 +15,11 @@ import sys
 import threading
 import time
 import webbrowser
+import logging
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = 8765
+VERSION = '2.1.0'
 HOSTS = {f'127.0.0.1:{PORT}', f'localhost:{PORT}'}
 ORIGINS = {f'http://{host}' for host in HOSTS}
 URLS = {'youtube': 'https://www.youtube.com/', 'spotify': 'https://open.spotify.com/',
@@ -56,16 +58,22 @@ class Controller:
         self.held_keys=set()
         self.key_deadline=0
         self.agent=MovementAgent()
+        self.last_command=None
+        self.last_error=None
         self.user32 = ctypes.windll.user32 if os.name == 'nt' and not dry_run else None
         if self.user32:
             self.user32.SetProcessDPIAware()
+            self.user32.SendInput.argtypes=[wintypes.UINT,ctypes.POINTER(Input),ctypes.c_int]
+            self.user32.SendInput.restype=wintypes.UINT
+            self.user32.MapVirtualKeyW.argtypes=[wintypes.UINT,wintypes.UINT]
+            self.user32.MapVirtualKeyW.restype=wintypes.UINT
 
     def key_event(self,code,up=False):
         if not self.user32:return
         scan=self.user32.MapVirtualKeyW(code,0)
         flags=(8 if scan else 0)|(2 if up else 0)|(1 if code in (0x25,0x26,0x27,0x28,0x2E) else 0)
         item=Input(kind=1,value=InputUnion(keyboard=KeyboardInput(0 if scan else code,scan,flags,0,0)))
-        if self.user32.SendInput(1,ctypes.byref(item),ctypes.sizeof(Input))!=1:raise OSError('Windows rejected input. Check the target window permissions.')
+        if self.user32.SendInput(1,ctypes.byref(item),ctypes.sizeof(Input))!=1:raise OSError('Windows rejected keyboard input. Focus the target app. Elevated apps and protected games can block input.')
 
     def release_keys(self):
         for key in list(self.held_keys):
@@ -107,6 +115,8 @@ class Controller:
             if now - self.last.get(action, -math.inf) < minimum:
                 return
             self.last[action] = now
+            self.last_command=action
+            self.last_error=None
             if action in ('shortcut','keydown','keyup'):
                 keys=data.get('keys')
                 if not isinstance(keys,list) or not 1<=len(keys)<=4 or any(not isinstance(k,str) or k not in KEY_CODES for k in keys) or len(set(keys))!=len(keys):raise ValueError('Invalid keys')
@@ -115,10 +125,15 @@ class Controller:
                     for key in reversed(keys):
                         if key in self.held_keys:self.key_event(KEY_CODES[key],True);self.held_keys.discard(key)
                 else:
-                    for key in keys:
-                        if key not in self.held_keys:self.key_event(KEY_CODES[key]);self.held_keys.add(key)
-                    if action=='shortcut':
-                        for key in reversed(keys):self.key_event(KEY_CODES[key],True);self.held_keys.discard(key)
+                    try:
+                        for key in keys:
+                            if key not in self.held_keys:self.key_event(KEY_CODES[key]);self.held_keys.add(key)
+                    except OSError:
+                        self.pause()
+                        raise
+                    finally:
+                        if action=='shortcut':
+                            self.release_keys()
                 return
             if action=='url':
                 url=data.get('url','')
@@ -149,10 +164,12 @@ class Controller:
                 elif action in APPS:
                     subprocess.Popen([str(APPS[action])])
                 elif action in KEYS:
-                    for key in KEYS[action]:
-                        self.key_event(key)
-                    for key in reversed(KEYS[action]):
-                        self.key_event(key,True)
+                    pressed=[]
+                    try:
+                        for key in KEYS[action]:
+                            self.key_event(key);pressed.append(key)
+                    finally:
+                        for key in reversed(pressed):self.key_event(key,True)
                 elif action in ('click','rightclick','doubleclick'):
                     for _ in range(2 if action=='doubleclick' else 1):
                         self.user32.mouse_event(0x0008 if action=='rightclick' else 0x0002,0,0,0,0)
@@ -192,8 +209,13 @@ def make_handler(root, controller):
                              and self.headers.get('Sec-Fetch-Dest') == 'document')
             if not self.allowed() and not ui_navigation:
                 return self.reply(403, {'error': 'Local origin required'})
+            if self.path in ('/','/index.html'):
+                self.send_response(302);self.send_header('Location','/studio/');self.end_headers();return
             if self.path == '/api/session':
-                return self.reply(200, {'token': controller.token, 'platform': 'windows', 'app': 'FlowTouch', 'version':'2.0.0', 'dryRun': controller.dry_run})
+                return self.reply(200, {'token': controller.token, 'platform': 'windows', 'app': 'FlowTouch', 'version':VERSION, 'dryRun': controller.dry_run})
+            if self.path=='/api/status':
+                if not hmac.compare_digest(self.headers.get('X-FlowTouch-Token',''),controller.token):return self.reply(403,{'error':'Session token required'})
+                return self.reply(200,{'armed':controller.armed,'lastCommand':controller.last_command,'lastError':controller.last_error,'version':VERSION})
             if self.path=='/api/agent/settings':
                 if not hmac.compare_digest(self.headers.get('X-FlowTouch-Token',''),controller.token):return self.reply(403,{'error':'Session token required'})
                 return self.reply(200,controller.agent.public())
@@ -221,6 +243,7 @@ def make_handler(root, controller):
             except PermissionError as error:
                 self.reply(409, {'error': str(error)})
             except OSError as error:
+                controller.last_error=str(error)
                 self.reply(500, {'error': str(error)})
             except (ValueError, TypeError) as error:
                 self.reply(400, {'error': str(error) if self.path.startswith('/api/agent/') else 'Invalid command'})
@@ -245,10 +268,12 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Validate commands without OS input')
     parser.add_argument('--no-browser', action='store_true')
     parser.add_argument('--self-test', help='Write a dry-run verification report and exit')
+    parser.add_argument('--app-root', type=Path, help='Development build directory')
+    parser.add_argument('--browser',action='store_true',help='Use the external browser instead of the native Studio window')
     args = parser.parse_args()
     if os.name != 'nt' and not args.dry_run:
         raise SystemExit('This companion supports Windows. Use --dry-run for development elsewhere.')
-    root = Path(__file__).resolve().parent / 'app'
+    root = args.app_root or Path(__file__).resolve().parent / 'app'
     if not (root / 'index.html').is_file():
         raise SystemExit('Missing app/index.html. Extract the complete FlowTouch-Windows.zip first.')
     if args.self_test:
@@ -256,11 +281,16 @@ def main():
         controller.execute({'action':'arm'})
         controller.execute({'action':'calculator'})
         controller.execute({'action':'youtube'})
-        report = {'ok':True,'studio':(root/'studio'/'index.html').is_file(),'model':(root/'models'/'gesture_recognizer.task').is_file(),'worker':(root/'vision-worker.bundle.js').is_file(),'native_commands':'dry-run passed','version':'2.0.0','agent':True}
+        report = {'ok':True,'studio':(root/'studio'/'index.html').is_file(),'model':(root/'models'/'gesture_recognizer.task').is_file(),'worker':(root/'vision-worker.bundle.js').is_file(),'native_commands':'dry-run passed','version':VERSION,'agent':True}
         Path(args.self_test).write_text(json.dumps(report),encoding='utf-8')
         return
     controller = Controller(args.dry_run)
-    server = ThreadingHTTPServer(('127.0.0.1', PORT), make_handler(root, controller))
+    try:
+        server = ThreadingHTTPServer(('127.0.0.1', PORT), make_handler(root, controller))
+    except OSError:
+        # A second launch must not crash with an invisible console traceback.
+        ctypes.windll.user32.MessageBoxW(None,'FlowTouch is already running, or port 8765 is occupied. Close the previous version and try again.','FlowTouch Studio',0x40)
+        return
     server.daemon_threads = True
     def emergency_monitor():
         while True:
@@ -273,15 +303,36 @@ def main():
     print('FlowTouch is running at http://127.0.0.1:8765')
     print('Enable commands in the local studio. Escape pauses OS control globally.')
     print('Close this window or press Ctrl+C to stop the companion.')
-    if not args.no_browser:
-        webbrowser.open('http://127.0.0.1:8765/studio/?desktop=1&v=2.0.0')
     try:
-        server.serve_forever()
+        if args.no_browser:
+            server.serve_forever()
+        elif args.browser:
+            webbrowser.open('http://127.0.0.1:8765/studio/?desktop=1&v='+VERSION)
+            server.serve_forever()
+        else:
+            threading.Thread(target=server.serve_forever,daemon=True).start()
+            import webview
+            # A dedicated WebView2 instance keeps the live-camera pipeline active
+            # when a different application has focus. Never disable its sandbox.
+            os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS']='--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows'
+            webview.settings['ALLOW_FILE_URLS']=False
+            webview.settings['ALLOW_DOWNLOADS']=True
+            webview.settings['OPEN_EXTERNAL_LINKS_IN_BROWSER']=True
+            window=webview.create_window('FlowTouch Studio','http://127.0.0.1:8765/studio/?desktop=1&v='+VERSION,width=1280,height=850,min_size=(960,680),background_color='#eef0ed',text_select=True)
+            window.events.closed += controller.pause
+            webview.start(gui='edgechromium',private_mode=False,storage_path=str(Path(os.environ['LOCALAPPDATA'])/'FlowTouch'/'WebView'))
+            server.shutdown()
     except KeyboardInterrupt:
         pass
+    except Exception as error:
+        logging.exception('Studio window failed')
+        ctypes.windll.user32.MessageBoxW(None,'Could not start Studio. Microsoft Edge WebView2 Runtime is required. See the README and studio.log for details.','FlowTouch Studio',0x10)
     finally:
         controller.pause()
         server.server_close()
 
 if __name__ == '__main__':
+    log_dir=Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'FlowTouch'
+    log_dir.mkdir(parents=True,exist_ok=True)
+    logging.basicConfig(filename=log_dir/'studio.log',level=logging.WARNING,format='%(asctime)s %(levelname)s %(message)s')
     main()

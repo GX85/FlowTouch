@@ -39,21 +39,26 @@ export function classify(result, threshold=.6) {
  const hand=result.landmarks?.[0];
  const category=result.gestures?.[0]?.[0];
  if (!hand) return {id:null,score:0,hand:null};
- const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
+ const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,(a.z??0)-(b.z??0));
  const palm=distance(hand[0],hand[9]);
- // A pinch needs an extended index: a folded fist can also put both tips close.
- const indexExtended=distance(hand[8],hand[0])>distance(hand[6],hand[0])*1.12;
- if (palm>.025 && distance(hand[4],hand[8])/palm<.24 && indexExtended) return {id:'Pinch',score:.95,hand};
- if(category?.score>=threshold && ['Closed_Fist','Victory','Pointing_Up','Thumb_Up','Thumb_Down','Open_Palm','ILoveYou'].includes(category.categoryName))return {id:category.categoryName,score:category.score,hand};
+ if(palm<.025)return {id:null,score:0,hand};
+ // Pinching bends the index. Requiring a fully extended index excluded real
+ // pinches; use joint angle plus palm-relative distance instead.
+ const jointAngle=(a,b,c)=>{const u=[a.x-b.x,a.y-b.y,(a.z??0)-(b.z??0)],v=[c.x-b.x,c.y-b.y,(c.z??0)-(b.z??0)];const length=Math.hypot(...u)*Math.hypot(...v);return length?Math.acos(Math.max(-1,Math.min(1,u.reduce((s,n,i)=>s+n*v[i],0)/length)))*180/Math.PI:0;};
  const extended=[8,12,16,20].map(t=>distance(hand[t],hand[0])>distance(hand[t-2],hand[0])*1.15);
- const thumbOut=distance(hand[4],hand[17])/Math.max(.001,palm)>1.25;
+ const pinch=distance(hand[4],hand[8])/palm<.30 && jointAngle(hand[5],hand[6],hand[8])>45 && (extended.slice(1).some(Boolean)||distance(hand[8],hand[0])>distance(hand[5],hand[0])*1.1);
+ if(pinch&&threshold<=.92)return {id:'Pinch',score:.92,hand};
+ const palmWidth=distance(hand[5],hand[17]);
+ const thumbOut=distance(hand[4],hand[17])>Math.max(palmWidth*1.15,palm*.85) && distance(hand[4],hand[5])>palm*.35;
  const code=extended.map(Number).join('');
  let custom=null;
  if(code==='1110'&&!thumbOut)custom='Three';
  if(code==='1111'&&!thumbOut)custom='Four';
  if(code==='1001'&&!thumbOut)custom='Rock';
  if(code==='0001'&&thumbOut)custom='Call';
- if(custom)return {id:custom,score:.82,hand};
+ // These patterns are not in the canned MediaPipe classifier. Evaluate them
+ // before its broader Open_Palm / ILoveYou matches, and respect sensitivity.
+ if(custom&&threshold<=.82)return {id:custom,score:.82,hand};
  return {id:category?.score>=threshold && GESTURES.some(g=>g.id===category.categoryName)?category.categoryName:null,score:category?.score??0,hand};
 }
 export class SwipeDetector {
