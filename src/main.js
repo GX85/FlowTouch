@@ -107,7 +107,7 @@ $('#recognition-mode').add(new Option(t('Игра · быстрый ввод','G
 const changeProfile=()=>{setArmed(false);if(profile==='geometry-dash')$('#recognition-mode').value='game';resetGates();};window.addEventListener('flowtouch:profile',changeProfile);
 let webWorkspace=null;
 let captureTimer=0,lastKeyPulse=0,heldKeys=null,nativeQueue=Promise.resolve(),frameSentAt=0,controlEpoch=0;
-let stream=null,worker=null,ready=false,busy=false,frameId=0,lastFrame=0,epoch=0,simulation=null,threshold=.6,bridge=null,armed=false,playing=false,volume=50,selected=null,pointer={x:.5,y:.5},lastPointer=0;
+let stream=null,worker=null,ready=false,busy=false,frameId=0,lastFrame=0,epoch=0,simulation=null,threshold=.5,bridge=null,armed=false,playing=false,volume=50,selected=null,pointer={x:.5,y:.5},lastPointer=0;
 function resetGates(){gate.reset();sequence.reset();swipe.samples=[];gameGate.reset();releaseGameKeys();}
 function releaseGameKeys(){webWorkspace?.release();if(heldKeys&&bridge)sendNative('keyup',{keys:heldKeys});heldKeys=null;}
 
