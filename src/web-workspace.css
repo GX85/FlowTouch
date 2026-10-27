@@ -1,0 +1,15 @@
+body.flowtouch-v2.is-studio .web-workspace{margin-top:18px;padding:22px;border:1px solid #dbe3d4;border-radius:17px;background:#ffffff72;box-shadow:0 8px 24px #445b3308}
+body.flowtouch-v2.is-studio .web-tools{display:grid;grid-template-columns:1fr auto;gap:8px 20px;align-items:center}
+body.flowtouch-v2.is-studio .web-tools h3,body.flowtouch-v2.is-studio .web-labs h3{margin:7px 0;color:#526944;font-size:17px;font-weight:500}
+body.flowtouch-v2.is-studio .web-tools p,body.flowtouch-v2.is-studio .web-labs p{margin:0;color:#87977b;font-size:10px;line-height:1.65}
+body.flowtouch-v2.is-studio #web-tab-status{grid-column:1/-1;color:#87977b;font-size:9px}
+body.flowtouch-v2.is-studio .web-labs{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:20px}
+body.flowtouch-v2.is-studio .web-labs>section{padding:16px;border:1px solid #dbe3d4;border-radius:13px;background:#f7faf3}
+body.flowtouch-v2.is-studio #web-media{display:block;width:100%;max-height:90px;margin:12px 0;border-radius:9px;background:#e1e8dc}
+body.flowtouch-v2.is-studio .web-game{position:relative;height:90px;margin:12px 0;overflow:hidden;border-radius:9px;background:linear-gradient(#edf2e8,#dce7d3);border:1px solid #d5e0ce}
+body.flowtouch-v2.is-studio .web-ground{position:absolute;left:0;right:0;bottom:17px;border-top:2px solid #8da77a}
+body.flowtouch-v2.is-studio .web-runner{position:absolute;left:23%;bottom:18px;width:22px;height:22px;border-radius:6px;background:#58774a;box-shadow:0 3px 0 #3d5733;transform-origin:center bottom}
+body.flowtouch-v2.is-studio .web-runner.held{background:#819f66;box-shadow:0 0 0 5px #a8c39055}
+body.flowtouch-v2.is-studio #web-key-state{position:absolute;right:10px;top:9px;color:#6e845d;font:9px Consolas,monospace}
+body.flowtouch-v2.is-studio .web-observer{margin-top:16px;padding-top:13px;border-top:1px solid #dbe3d4;color:#718666;font-size:10px}
+@media(max-width:700px){body.flowtouch-v2.is-studio .web-tools,body.flowtouch-v2.is-studio .web-labs{grid-template-columns:1fr}body.flowtouch-v2.is-studio .web-tools .button{width:100%}}

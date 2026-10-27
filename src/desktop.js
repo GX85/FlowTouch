@@ -6,5 +6,5 @@ export async function connectDesktop(fetcher) {
  return session;
 }
 export function expectsDesktop(location) {
- return ['127.0.0.1','localhost'].includes(location.hostname)&&location.port==='8765'||new URLSearchParams(location.search).get('desktop')==='1';
+ return ['127.0.0.1','localhost'].includes(location.hostname)&&(location.port==='8765'||new URLSearchParams(location.search).get('desktop')==='1');
 }

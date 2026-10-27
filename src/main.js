@@ -1,3 +1,4 @@
+import {mountWebWorkspace} from './web-workspace.js';
 import {poseIllustration} from './pose-illustration.js';
 import {upgradeLanding, installLanguage, t, english} from './landing.js';
 import {BindingStore, ACTIONS, KEY_NAMES, PROFILES, GameInputGate} from './bindings.js';
@@ -11,6 +12,7 @@ import { openCamera, describeCameraError } from './camera';
 import './glass.css';
 import './premium.css';
 import './studio.css';
+import './web-workspace.css';
 import { animate, inView, scroll, stagger } from 'motion';
 import { createIcons, ArrowUpRight, ArrowRight, Play, Camera, ShieldCheck, Scan, Hand, MousePointer2, Volume2, X, Check, Download, Github, ChevronDown, SlidersHorizontal, CircleHelp, Pause, ArrowDown, Fingerprint, MoveUpRight, Monitor, VideoOff, Sparkles, ExternalLink, RotateCcw, Search } from 'lucide';
 import { GESTURES, byId, classify, GestureGate, SwipeDetector, SequenceGate } from './gestures';
@@ -41,7 +43,7 @@ document.querySelector('#app').innerHTML=`
 </main><footer class="wrap footer">${logo}<span>Новый способ быть в потоке.</span><span>FlowTouch · экспериментальная бета · 2026</span><a href="#">Наверх ↑</a></footer><div class="toast" id="toast" role="status" hidden></div><dialog id="gesture-dialog"><button class="dialog-close icon-button" id="dialog-close" aria-label="Закрыть">${icon('x')}</button><div id="dialog-content"></div></dialog>`;
 createIcons({icons});
 const $=s=>document.querySelector(s);
-const isStudio=location.pathname.replace(/\/$/,'')===appUrl('studio');
+const isStudio=[appUrl('studio'),appUrl('studio.html')].some(path=>location.pathname.replace(/\/$/,'')===path.replace(/\/$/,''));
 document.querySelectorAll('a[href="#studio"]').forEach(a=>a.href=appUrl('studio/'));
 const demoLink=$('#watch-demo');if(demoLink){const a=document.createElement('a');a.className=demoLink.className;a.id='watch-demo';a.href=appUrl('studio/');a.innerHTML=demoLink.innerHTML;demoLink.replaceWith(a);}
 if(isStudio){
@@ -103,13 +105,14 @@ if(isStudio){
 const gate=new GestureGate(),swipe=new SwipeDetector(),sequence=new SequenceGate(),gameGate=new GameInputGate();
 $('#recognition-mode').add(new Option(t('Игра · быстрый ввод','Game · fast input'),'game'));
 const changeProfile=()=>{setArmed(false);if(profile==='geometry-dash')$('#recognition-mode').value='game';resetGates();};window.addEventListener('flowtouch:profile',changeProfile);
+let webWorkspace=null;
 let captureTimer=0,lastKeyPulse=0,heldKeys=null,nativeQueue=Promise.resolve(),frameSentAt=0,controlEpoch=0;
 let stream=null,worker=null,ready=false,busy=false,frameId=0,lastFrame=0,epoch=0,simulation=null,threshold=.6,bridge=null,armed=false,playing=false,volume=50,selected=null,pointer={x:.5,y:.5},lastPointer=0;
 function resetGates(){gate.reset();sequence.reset();swipe.samples=[];gameGate.reset();releaseGameKeys();}
-function releaseGameKeys(){if(heldKeys&&bridge)sendNative('keyup',{keys:heldKeys});heldKeys=null;}
+function releaseGameKeys(){webWorkspace?.release();if(heldKeys&&bridge)sendNative('keyup',{keys:heldKeys});heldKeys=null;}
 
-function setArmed(value){controlEpoch++;armed=value;$('#armed').checked=value;resetGates();$('#arm-hint').textContent=value?'Управление активно · Esc для паузы':'Команды на паузе';$('#control-toggle').textContent=value?'Остановить управление':bridge?'Начать управление Windows':'Включить демокоманды';$('#control-toggle').classList.toggle('running',value);$('#studio-dot').classList.toggle('on',value);if(!value)$('#virtual-cursor').hidden=true;if(bridge)sendNative(value?'arm':'disarm',{});}
-$('#control-toggle').onclick=()=>{training=null;setArmed(!armed);notify(armed?(bridge?'Управление Windows включено. Сожми кулак на 0,8 секунды.':'Демокоманды включены. Для запуска программ нужен FlowTouch.exe.'):'Команды остановлены. Распознавание продолжает работать.');};
+function setArmed(value){controlEpoch++;armed=value;$('#armed').checked=value;resetGates();$('#arm-hint').textContent=value?'Управление активно · Esc для паузы':'Команды на паузе';$('#control-toggle').textContent=value?'Остановить управление':bridge?'Начать управление Windows':'Начать управление в браузере';$('#control-toggle').classList.toggle('running',value);$('#studio-dot').classList.toggle('on',value);if(!value)$('#virtual-cursor').hidden=true;if(bridge)sendNative(value?'arm':'disarm',{});}
+$('#control-toggle').onclick=()=>{training=null;setArmed(!armed);notify(armed?(bridge?'Управление Windows включено. Сожми кулак на 0,8 секунды.':'Команды веб-версии включены. Они действуют внутри Studio и в подключённой вкладке.'):'Команды остановлены. Распознавание продолжает работать.');};
 $('#armed').onchange=e=>{training=null;setArmed(e.target.checked);};
 $('#recognition-mode').onchange=()=>{setArmed(false);resetGates();notify('Режим: '+$('#recognition-mode').selectedOptions[0].textContent+'. Escape всегда ставит управление на паузу.');};
 $('#fist-target').previousElementSibling.remove();$('#fist-target').remove();
@@ -202,9 +205,9 @@ function handleGesture(id,score,hand,time){
  if(mode==='game'){
   $('#current-emoji').textContent=poseEmoji(id);$('#current-name').textContent=poseLabel(id??'')||t('Покажи руку','Show your hand');
   const edge=gameGate.update(id,time);$('#hold-progress').style.width=gameGate.current?'100%':'0';$('#hold-percent').textContent=gameGate.current?'100%':'0%';$('#hold-label').textContent=t('Быстрый ввод · Escape — пауза','Fast input · Escape pauses control');
-  if(edge){releaseGameKeys();if(edge.press&&armed&&!training){if(edge.press==='Open_Palm'){setArmed(false);return;}const g=byId(edge.press),b=g&&bindings.get(g,profile);if(b?.mode==='shortcut'&&b.behavior==='hold'&&bridge){heldKeys=b.keys;sendNative('keydown',{keys:b.keys});$('#last-action').textContent=b.keys.join(' + ')+t(' · удержание',' · held');}else if(g)execute(g.id);}}
+  if(edge){releaseGameKeys();if(edge.press&&armed&&!training){if(edge.press==='Open_Palm'){setArmed(false);return;}const g=byId(edge.press),b=g&&bindings.get(g,profile);if(b?.mode==='shortcut'&&b.behavior==='hold'){heldKeys=b.keys;if(bridge)sendNative('keydown',{keys:b.keys});else webWorkspace?.hold(b.keys);$('#last-action').textContent=b.keys.join(' + ')+t(' · удержание',' · held');}else if(g)execute(g.id);}}
   if(heldKeys&&bridge&&armed&&hand&&time-lastKeyPulse>240){lastKeyPulse=time;sendNative('keydown',{keys:heldKeys});}
-  if(armed&&!bridge)notify(t('Для системного ввода запусти FlowTouch.exe. Браузер показывает распознанные движения.','Run FlowTouch.exe for system input. The browser shows recognized movements.'));return;
+  return;
  }
  if(mode==='swipe')current=swipe.update(id==='Open_Palm'||id==='Four'?hand:null,time);
  $('#current-emoji').textContent=poseEmoji(current);$('#current-name').textContent=byId(current)?.name??(hand?'Ищем знакомый жест…':'Покажи руку');
@@ -232,18 +235,7 @@ async function execute(id){
  if(g.mode==='pause'){setArmed(false);notify('Ладонь: управление остановлено. Для продолжения включи переключатель.');return;}
  const binding=bindings.get(g,profile);if(binding.mode==='none')return;
  if(bridge){const mode=binding.mode;const label=bindingLabel(g);const ok=await sendNative(mode,['click','pointer'].includes(binding.mode)?pointer:{keys:binding.keys,url:binding.url,path:binding.path});if(ok){$('#last-action').textContent='Выполнено: '+label;toast(label);sound.play('success');}return;}
- $('#last-action').textContent='Демо: '+g.action;
- const urls={youtube:'https://www.youtube.com/',spotify:'https://open.spotify.com/',google:'https://www.google.com/',github:'https://github.com/',wiki:'https://www.wikipedia.org/'};
- if(urls[g.mode]){notify('Команда готова. Браузер требует клик, чтобы открыть внешнюю вкладку.');const a=document.createElement('a');a.href=urls[g.mode];a.target='_blank';a.rel='noopener noreferrer';a.className='action-link';a.textContent='Открыть '+g.action.replace('Открыть ','')+' ↗';$('#status-message').append(' ',a);}
- else if(g.mode==='media')setPlaying(!playing);
- else if(g.mode==='stopmedia')setPlaying(false);
- else if(g.mode==='volumeup')setVolume(volume+10);
- else if(g.mode==='volumedown')setVolume(volume-10);
- else if(g.mode==='mute')setVolume(volume?0:50);
- else if(g.mode==='click'){setPlaying(!playing);notify('Щепотка нажала кнопку плеера в песочнице.');}
- else if(g.mode==='scrollup'||g.mode==='scrolldown'){$('#practice-title').textContent=g.mode==='scrollup'?'↑ Прокрутка вверх':'↓ Прокрутка вниз';notify('Свайп распознан. В локальном режиме он прокрутит активное окно.');}
- else if(g.mode==='pointer')notify('Перемещай указательный палец: курсор движется в окне камеры.');
- else notify('Распознано: '+g.action+'. Для системного действия запусти помощник Windows.');
+ try{const result=await webWorkspace.execute(binding);$('#last-action').textContent=result;notify(result);sound.play('success');}catch(error){notify(error.message);sound.play('error');}
 }
 function sendNative(action,payload){
  const generation=controlEpoch,queuedAt=performance.now();
@@ -284,8 +276,18 @@ async function refreshDesktop(){
   setTimeout(refreshDesktop,3000);
  }
 }
-refreshDesktop();if(profile==='geometry-dash')$('#recognition-mode').value='game';
-import('./ollama-ui.js').then(m=>m.mountAgent({getBridge:()=>bridge,getProfile:()=>profile,notify,t}));
+refreshDesktop();
+if(!nativeExpected){
+ webWorkspace=mountWebWorkspace({notify,t});
+ $('#execution-mode-title').textContent=t('FlowTouch Studio · браузерная версия','FlowTouch Studio · browser edition');
+ $('#execution-mode-detail').textContent=t('Без установки. Камера и распознавание работают локально. Команды действуют в Studio и подключённой вкладке.','No installation. Camera recognition runs on your device. Actions work in Studio and a connected tab.');
+ $('#desktop-download').remove();$('#start-simulation').remove();
+ $('#runtime-label').textContent=t('WEB · настоящее распознавание · 126 шаблонов','WEB · real recognition · 126 patterns');
+ $('#bridge-status').textContent=t('Браузер · без доступа к Windows','Browser · no Windows access');
+ $('.browser-limits').textContent=t('Сначала подключи камеру, затем включи команды. Для сайтов заранее подключи вкладку кнопкой ниже. Веб-страница не управляет другими приложениями, системной громкостью или содержимым чужих вкладок.','Connect the camera, then enable actions. Connect a website tab below first. A web page cannot control other apps, system volume or another website’s content.');
+}
+if(profile==='geometry-dash')$('#recognition-mode').value='game';
+if(nativeExpected)import('./ollama-ui.js').then(m=>m.mountAgent({getBridge:()=>bridge,getProfile:()=>profile,notify,t}));
 function startSimulation(){
  stopCamera();$('#camera-placeholder').hidden=true;$('#simulation-label').hidden=false;$('#stop-camera').hidden=false;$('#camera-meta').textContent='SIMULATION / NO CAMERA';$('#tracking-status').textContent='Иллюстрация распознавания';$('#arm-hint').textContent='Демонстрация — команды отключены';notify('Это симуляция интерфейса. Камера выключена, команды не выполняются.');
  let i=0;const samples=['Closed_Fist','Victory','Thumb_Up','Pinch'];
@@ -295,7 +297,7 @@ if($('#start-simulation'))$('#start-simulation').onclick=startSimulation;
 window.addEventListener('pagehide',()=>{stopCamera();sound.disable();});
 function startTraining(id){const g=byId(id);if(!g)return;training=id;setArmed(false);$('#practice-title').textContent='Тренировка: '+g.action;$('#practice-instruction').textContent=g.desc+' Команды во время тренировки не исполняются.';$('#recognition-mode').value=g.sequence?'combo':g.id.startsWith('Swipe')?'swipe':'pose';resetGates();$('#studio').scrollIntoView({behavior:'smooth'});notify('Тренировка включена. Подключи камеру или выбери демо.');}
 window.addEventListener('flowtouch:train',event=>startTraining(event.detail));
-const routeParams=new URLSearchParams(location.search);if(byId(routeParams.get('gesture')))startTraining(routeParams.get('gesture'));if(routeParams.get('demo')==='1'&&!nativeExpected)startSimulation();
+const routeParams=new URLSearchParams(location.search);if(byId(routeParams.get('gesture')))startTraining(routeParams.get('gesture'));
 }
 
 if(!isStudio&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
